@@ -6,8 +6,15 @@ a local development stack to a hardened production deployment.
 ## Prerequisites
 
 - Docker Engine 24+ with the Docker Compose plugin (`docker compose version`)
+- `make` (optional convenience — every target has a raw `docker compose` equivalent)
 - 8 GB RAM minimum (backend + Solr are memory-hungry), 4 CPU cores recommended
 - For production: a DNS name pointing at the host, and TLS certificates
+
+On a fresh Ubuntu/Debian server, install everything in one step:
+
+```bash
+sudo ./scripts/bootstrap.sh
+```
 
 ## 1. Create a deployment from the template
 

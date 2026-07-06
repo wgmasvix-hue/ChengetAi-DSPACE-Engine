@@ -26,16 +26,24 @@ so all services stay on matching releases.
 git clone https://github.com/wgmasvix-hue/ChengetAi-DSPACE-Engine.git my-deployment
 cd my-deployment
 
-# 2. Configure it
+# 2. On a fresh server, install prerequisites (make, Docker + compose plugin)
+sudo ./scripts/bootstrap.sh
+
+# 3. Configure it
 cp .env.example .env
 # edit .env — at minimum set POSTGRES_PASSWORD
+cp config/local.cfg.example config/local.cfg
 
-# 3. Launch the stack
+# 4. Launch the stack
 make up          # or: docker compose up -d
 
-# 4. Create the first administrator account
+# 5. Create the first administrator account
 make admin       # or: ./scripts/init-admin.sh
 ```
+
+`make` is only a convenience wrapper — every target has a plain
+`docker compose` equivalent shown in the Makefile, so the stack works
+without it.
 
 Then open:
 
@@ -75,6 +83,7 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full production checklist
 ├── nginx/
 │   └── nginx.conf.template   # Reverse proxy config (envsubst on DSPACE_HOSTNAME)
 ├── scripts/
+│   ├── bootstrap.sh          # Prepare a fresh Ubuntu/Debian server (make, Docker)
 │   ├── init-admin.sh         # Create the first DSpace administrator
 │   ├── backup.sh             # Dump database + assetstore to ./backups
 │   └── restore.sh            # Restore a backup produced by backup.sh
