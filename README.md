@@ -19,31 +19,55 @@ deployment — development, staging, or production — starts from this template
 The DSpace version is pinned in `.env` via `DSPACE_VER` (default `dspace-9_x`)
 so all services stay on matching releases.
 
-## Quick start (development)
+## Quick start — the `chengetai` deploy CLI
+
+On a fresh Ubuntu/Debian server, two commands take you from nothing to a
+running DSpace:
 
 ```bash
-# 1. Start a new deployment from this template
-git clone https://github.com/wgmasvix-hue/ChengetAi-DSPACE-Engine.git my-deployment
-cd my-deployment
-
-# 2. On a fresh server, install prerequisites (make, Docker + compose plugin)
-sudo ./scripts/bootstrap.sh
-
-# 3. Configure it
-cp .env.example .env
-# edit .env — at minimum set POSTGRES_PASSWORD
-cp config/local.cfg.example config/local.cfg
-
-# 4. Launch the stack
-make up          # or: docker compose up -d
-
-# 5. Create the first administrator account
-make admin       # or: ./scripts/init-admin.sh
+curl -fsSL https://raw.githubusercontent.com/wgmasvix-hue/ChengetAi-DSPACE-Engine/main/install.sh | sudo bash
+chengetai deploy
 ```
 
-`make` is only a convenience wrapper — every target has a plain
-`docker compose` equivalent shown in the Makefile, so the stack works
-without it.
+The installer clones this template into `/opt/chengetai` (override with
+`CHENGETAI_HOME`), installs Docker and the compose plugin, and links the
+`chengetai` command into your PATH. `chengetai deploy` then walks you through
+an interactive setup (site name, dev/production mode, hostname, admin email —
+the database password is generated for you), runs environment checks, starts
+the stack, waits for the backend to come up, and creates your administrator
+account.
+
+```
+chengetai init             interactive setup (.env + config/local.cfg)
+chengetai deploy           checks + pull + start + wait + create admin
+chengetai status           service status and deployment URLs
+chengetai logs [service]   tail logs
+chengetai admin            create an administrator account
+chengetai backup           snapshot database + assetstore
+chengetai restore <dir>    restore a snapshot
+chengetai reindex          rebuild the search index
+chengetai upgrade <tag>    backup, bump DSPACE_VER, migrate, reindex
+chengetai doctor           check docker, RAM, disk, TLS certs, mail
+```
+
+### Manual quick start (without the installer)
+
+```bash
+git clone https://github.com/wgmasvix-hue/ChengetAi-DSPACE-Engine.git my-deployment
+cd my-deployment
+sudo ./scripts/bootstrap.sh    # fresh server only: installs make + Docker
+./bin/chengetai deploy         # or the make/docker compose flow below
+```
+
+Prefer raw tooling? Every CLI command has a `make` target or plain
+`docker compose` equivalent (see the Makefile), so the stack also works
+without the CLI:
+
+```bash
+cp .env.example .env                          # set POSTGRES_PASSWORD + URLs
+cp config/local.cfg.example config/local.cfg
+make up && make admin
+```
 
 Then open:
 
@@ -74,6 +98,9 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full production checklist
 
 ```
 .
+├── bin/
+│   └── chengetai             # The deploy CLI (linked to /usr/local/bin by install.sh)
+├── install.sh                # One-line installer: clone + bootstrap + link CLI
 ├── docker-compose.yml        # Core stack (backend, frontend, db, solr)
 ├── docker-compose.prod.yml   # Production overlay (nginx + TLS, restart policies)
 ├── .env.example              # All tunables — copy to .env per deployment
@@ -104,15 +131,15 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full production checklist
 
 ## Operations
 
-| Task                    | Command                                  |
-|-------------------------|------------------------------------------|
-| Start / stop            | `make up` / `make down`                  |
-| Tail logs               | `make logs`                              |
-| Create admin account    | `make admin`                             |
-| Backup db + assetstore  | `make backup`                            |
-| Restore a backup        | `make restore BACKUP=backups/<timestamp>`|
-| Reindex discovery       | `make reindex`                           |
-| Upgrade DSpace version  | bump `DSPACE_VER` in `.env`, see docs    |
+| Task                    | CLI                            | Make equivalent                           |
+|-------------------------|--------------------------------|-------------------------------------------|
+| Start / stop            | `chengetai up` / `down`        | `make up` / `make down`                   |
+| Tail logs               | `chengetai logs`               | `make logs`                               |
+| Create admin account    | `chengetai admin`              | `make admin`                              |
+| Backup db + assetstore  | `chengetai backup`             | `make backup`                             |
+| Restore a backup        | `chengetai restore <dir>`      | `make restore BACKUP=backups/<timestamp>` |
+| Reindex discovery       | `chengetai reindex`            | `make reindex`                            |
+| Upgrade DSpace version  | `chengetai upgrade <tag>`      | bump `DSPACE_VER` in `.env`, see docs     |
 
 ## License
 

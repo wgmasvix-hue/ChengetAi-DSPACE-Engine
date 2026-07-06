@@ -5,6 +5,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# shellcheck disable=SC1091
 [ -f .env ] && set -a && . ./.env && set +a
 
 BACKUP_DIR="${1:?usage: $0 backups/<timestamp>}"

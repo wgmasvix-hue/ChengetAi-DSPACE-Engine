@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+# =============================================================================
+# chengetai — the ChengetAi DSpace deploy CLI
+#
+# One command per lifecycle stage of a deployment created from the
+# ChengetAi-DSPACE-Engine template:
+#
+#   chengetai init      interactive setup — writes .env and config/local.cfg
+#   chengetai deploy    checks, pulls images, starts the stack, creates admin
+#   chengetai status    service status + deployment URLs
+#   chengetai backup    database + assetstore snapshot into ./backups
+#   chengetai upgrade   pinned-version upgrade with automatic pre-backup
+#
+# Run `chengetai help` for the full command list.
+# =============================================================================
+set -euo pipefail
+
+VERSION="1.0.0"
+
+# Operate on the deployment this binary belongs to, even when invoked
+# through the /usr/local/bin/chengetai symlink.
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+cd "$ROOT_DIR"
+
+if [ -t 1 ]; then
+  BOLD=$'\e[1m'; GREEN=$'\e[32m'; YELLOW=$'\e[33m'; RED=$'\e[31m'; RESET=$'\e[0m'
+else
+  BOLD=""; GREEN=""; YELLOW=""; RED=""; RESET=""
+fi
+info() { echo "${GREEN}==>${RESET} $*"; }
+warn() { echo "${YELLOW}warning:${RESET} $*" >&2; }
+die()  { echo "${RED}error:${RESET} $*" >&2; exit 1; }
+
+load_env() {
+  [ -f .env ] || die "no .env in ${ROOT_DIR} — run 'chengetai init' first"
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+}
+
+# Pick compose files based on DEPLOY_ENV from .env
+compose() {
+  if [ "${DEPLOY_ENV:-development}" = "production" ]; then
+    docker compose -f docker-compose.yml -f docker-compose.prod.yml "$@"
+  else
+    docker compose "$@"
+  fi
+}
+
+gen_password() {
+  head -c 64 /dev/urandom | base64 | tr -d '+/=\n' | head -c 24
+}
+
+set_env_var() { # key value — replace `key=...` in .env, keeping comments intact
+  sed -i "s|^${1}=.*|${1}=${2}|" .env
+}
+
+# --- commands ----------------------------------------------------------------
+
+cmd_init() {
+  if [ -f .env ] && [ "${1:-}" != "--force" ]; then
+    die ".env already exists — edit it directly, or re-run with: chengetai init --force"
+  fi
+  [ -t 0 ] || die "init is interactive — run it in a terminal, or create .env from .env.example by hand"
+
+  echo "${BOLD}ChengetAi DSpace — new deployment setup${RESET}"
+  echo
+
+  read -r -p "Site name [ChengetAi Digital Repository]: " SITE_NAME
+  SITE_NAME=${SITE_NAME:-ChengetAi Digital Repository}
+
+  read -r -p "Deployment mode (development/production) [development]: " MODE
+  MODE=${MODE:-development}
+  case "$MODE" in
+    development|production) ;;
+    *) die "mode must be 'development' or 'production'" ;;
+  esac
+
+  if [ "$MODE" = "production" ]; then
+    read -r -p "Public hostname (e.g. repository.example.org): " SITE_HOST
+    [ -n "$SITE_HOST" ] || die "a public hostname is required for production"
+    UI_URL="https://${SITE_HOST}"
+    REST_URL="https://${SITE_HOST}/server"
+    ADMIN_DEFAULT="admin@${SITE_HOST}"
+  else
+    SITE_HOST="localhost"
+    UI_URL="http://localhost:4000"
+    REST_URL="http://localhost:8080/server"
+    ADMIN_DEFAULT="admin@example.org"
+  fi
+
+  read -r -p "Administrator email [${ADMIN_DEFAULT}]: " ADMIN_MAIL
+  ADMIN_MAIL=${ADMIN_MAIL:-$ADMIN_DEFAULT}
+
+  DB_PASS="$(gen_password)"
+
+  cp .env.example .env
+  set_env_var DEPLOY_ENV "$MODE"
+  set_env_var DSPACE_HOSTNAME "$SITE_HOST"
+  set_env_var DSPACE_UI_URL "$UI_URL"
+  set_env_var DSPACE_REST_URL "$REST_URL"
+  set_env_var DSPACE_NAME "\"${SITE_NAME}\""
+  set_env_var POSTGRES_PASSWORD "$DB_PASS"
+  set_env_var ADMIN_EMAIL "$ADMIN_MAIL"
+
+  [ -f config/local.cfg ] || cp config/local.cfg.example config/local.cfg
+
+  echo
+  info "Wrote .env (database password auto-generated) and config/local.cfg"
+  if [ "$MODE" = "production" ]; then
+    info "Production mode: place TLS certificates at nginx/certs/{fullchain,privkey}.pem before deploying"
+  fi
+  info "Next: chengetai deploy"
+}
+
+wait_for_backend() {
+  info "Waiting for the DSpace backend (first start can take several minutes)..."
+  local tries=0
+  until compose exec -T dspace bash -c \
+    'if command -v curl >/dev/null; then curl -sf http://localhost:8080/server/api >/dev/null; else (echo > /dev/tcp/127.0.0.1/8080); fi' \
+    2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 120 ]; then
+      die "backend not ready after 10 minutes — inspect with: chengetai logs dspace"
+    fi
+    sleep 5
+  done
+  info "Backend is responding."
+}
+
+cmd_deploy() {
+  [ -f .env ] || cmd_init
+  load_env
+  cmd_doctor
+  info "Pulling DSpace images (${DSPACE_VER:-dspace-9_x})..."
+  compose pull -q
+  info "Starting the stack (${DEPLOY_ENV:-development} mode)..."
+  compose up -d
+  wait_for_backend
+  echo
+  info "Deployment is up."
+  cmd_status
+  if [ -t 0 ]; then
+    read -r -p "Create the administrator account now? [Y/n] " REPLY
+    case "${REPLY,,}" in
+      n|no) info "Later: chengetai admin" ;;
+      *) ./scripts/init-admin.sh ;;
+    esac
+  else
+    info "Create the administrator account with: chengetai admin"
+  fi
+}
+
+cmd_status() {
+  load_env
+  compose ps
+  echo
+  echo "${BOLD}URLs${RESET}"
+  echo "  UI:       ${DSPACE_UI_URL:-http://localhost:4000}"
+  echo "  REST API: ${DSPACE_REST_URL:-http://localhost:8080/server}"
+}
+
+cmd_doctor() {
+  command -v docker >/dev/null || die "docker not installed — run: sudo ${ROOT_DIR}/scripts/bootstrap.sh"
+  docker compose version >/dev/null 2>&1 || die "docker compose plugin missing — run: sudo ${ROOT_DIR}/scripts/bootstrap.sh"
+  docker info >/dev/null 2>&1 || die "cannot talk to the docker daemon (is it running? do you need sudo?)"
+
+  if [ -r /proc/meminfo ]; then
+    local mem_kb
+    mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+    [ "$mem_kb" -lt 7500000 ] && warn "server has <8 GB RAM — DSpace + Solr may be unstable under load"
+  fi
+
+  local disk_kb
+  disk_kb=$(df -Pk . | awk 'NR==2 {print $4}')
+  [ "$disk_kb" -lt 20000000 ] && warn "<20 GB free disk — images, database, and assetstore need room to grow"
+
+  if [ -f .env ]; then
+    load_env
+    if [ "${DEPLOY_ENV:-}" = "production" ]; then
+      if [ ! -f nginx/certs/fullchain.pem ] || [ ! -f nginx/certs/privkey.pem ]; then
+        warn "production mode but TLS certificates missing in nginx/certs/ — the proxy will not start"
+      fi
+      [ -n "${MAIL_SERVER:-}" ] || warn "MAIL_SERVER is empty — registration and notification emails will not be sent"
+    fi
+  fi
+  info "doctor: environment checks passed"
+}
+
+cmd_upgrade() {
+  local new_ver="${1:?usage: chengetai upgrade <version-tag>   e.g. chengetai upgrade dspace-9.1}"
+  load_env
+  info "Current version: ${DSPACE_VER:-unset} — upgrading to ${new_ver}"
+  info "Taking a pre-upgrade backup..."
+  ./scripts/backup.sh
+  set_env_var DSPACE_VER "$new_ver"
+  load_env
+  compose pull -q
+  compose up -d
+  wait_for_backend
+  info "Rebuilding the search index..."
+  compose exec dspace /dspace/bin/dspace index-discovery -b
+  info "Upgrade to ${new_ver} complete. Verify the UI, search, and submission workflow."
+}
+
+usage() {
+  cat <<EOF
+${BOLD}chengetai${RESET} — the ChengetAi DSpace deploy CLI (v${VERSION})
+
+${BOLD}Getting started${RESET}
+  init             Interactive setup: writes .env and config/local.cfg
+  deploy           Doctor + pull + start + wait for backend + create admin
+  doctor           Check docker, RAM, disk, TLS certs, mail config
+
+${BOLD}Day to day${RESET}
+  status           Service status and deployment URLs
+  logs [service]   Tail logs (all services, or one: dspace, dspace-angular, dspacedb, dspacesolr)
+  up | down        Start / stop the stack (data volumes are kept)
+  restart          Restart all services
+  admin            Create a DSpace administrator account
+
+${BOLD}Data & maintenance${RESET}
+  backup           Snapshot database + assetstore into ./backups/<timestamp>
+  restore <dir>    Restore a snapshot (e.g. chengetai restore backups/20260706T120000Z)
+  reindex          Rebuild the discovery (search) index
+  upgrade <tag>    Backup, bump DSPACE_VER, pull, migrate, reindex
+
+Deployment directory: ${ROOT_DIR}
+EOF
+}
+
+CMD="${1:-help}"
+shift || true
+case "$CMD" in
+  init)      cmd_init "$@" ;;
+  deploy)    cmd_deploy "$@" ;;
+  doctor)    cmd_doctor "$@" ;;
+  status|ps) cmd_status ;;
+  logs)      load_env; compose logs -f --tail=100 "$@" ;;
+  up)        load_env; compose up -d ;;
+  down)      load_env; compose down ;;
+  restart)   load_env; compose restart ;;
+  admin)     ./scripts/init-admin.sh ;;
+  backup)    ./scripts/backup.sh ;;
+  restore)   ./scripts/restore.sh "$@" ;;
+  reindex)   load_env; compose exec dspace /dspace/bin/dspace index-discovery -b ;;
+  upgrade)   cmd_upgrade "$@" ;;
+  version|--version|-v) echo "chengetai ${VERSION}" ;;
+  help|--help|-h) usage ;;
+  *) usage; die "unknown command: ${CMD}" ;;
+esac

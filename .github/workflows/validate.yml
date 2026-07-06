@@ -17,13 +17,18 @@ jobs:
           docker compose -f docker-compose.yml config -q
           docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
 
-      - name: Shellcheck scripts
+      - name: Shellcheck scripts and CLI
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q shellcheck
-          shellcheck scripts/*.sh
+          shellcheck scripts/*.sh install.sh bin/chengetai
 
       - name: Scripts are executable
         run: |
-          for f in scripts/*.sh; do
+          for f in scripts/*.sh install.sh bin/chengetai; do
             [ -x "$f" ] || { echo "$f is not executable"; exit 1; }
           done
+
+      - name: CLI smoke test (no docker required)
+        run: |
+          ./bin/chengetai version
+          ./bin/chengetai help

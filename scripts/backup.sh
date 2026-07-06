@@ -4,6 +4,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# shellcheck disable=SC1091
 [ -f .env ] && set -a && . ./.env && set +a
 
 POSTGRES_DB="${POSTGRES_DB:-dspace}"

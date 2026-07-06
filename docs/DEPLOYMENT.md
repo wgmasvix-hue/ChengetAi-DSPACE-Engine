@@ -3,6 +3,17 @@
 This guide walks through deploying a DSpace instance from this template, from
 a local development stack to a hardened production deployment.
 
+**Shortest path:** the `chengetai` deploy CLI automates sections 1–3 of this
+guide. On a fresh Ubuntu/Debian server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wgmasvix-hue/ChengetAi-DSPACE-Engine/main/install.sh | sudo bash
+chengetai deploy
+```
+
+The rest of this document explains what the CLI does under the hood, and is
+the reference for manual or non-Debian deployments.
+
 ## Prerequisites
 
 - Docker Engine 24+ with the Docker Compose plugin (`docker compose version`)

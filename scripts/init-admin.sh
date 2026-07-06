@@ -4,6 +4,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# shellcheck disable=SC1091
 [ -f .env ] && set -a && . ./.env && set +a
 
 ADMIN_EMAIL="${ADMIN_EMAIL:?ADMIN_EMAIL must be set in .env}"
