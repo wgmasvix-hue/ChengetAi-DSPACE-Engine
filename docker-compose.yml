@@ -1,0 +1,124 @@
+# =============================================================================
+# ChengetAi DSpace Engine — core stack
+#
+# Usage:
+#   development: docker compose up -d
+#   production:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# All tunables live in .env (see .env.example). Backend configuration overrides
+# beyond what is set here belong in config/local.cfg.
+# =============================================================================
+
+networks:
+  dspacenet:
+    driver: bridge
+
+volumes:
+  pgdata:
+  solr_data:
+  assetstore:
+
+services:
+  # DSpace backend (REST API / server webapp)
+  dspace:
+    image: "dspace/dspace:${DSPACE_VER:-dspace-9_x}"
+    container_name: "${COMPOSE_PROJECT_NAME:-dspace}-backend"
+    depends_on:
+      dspacedb:
+        condition: service_healthy
+      dspacesolr:
+        condition: service_started
+    networks:
+      - dspacenet
+    ports:
+      - "${DSPACE_BACKEND_PORT:-8080}:8080"
+    stdin_open: true
+    tty: true
+    volumes:
+      - assetstore:/dspace/assetstore
+      - ./config/local.cfg:/dspace/config/local.cfg:ro
+    environment:
+      # DSpace env-style config: __P__ => "." and __D__ => "-"
+      dspace__P__dir: /dspace
+      dspace__P__name: "${DSPACE_NAME:-ChengetAi Digital Repository}"
+      dspace__P__server__P__url: "${DSPACE_REST_URL:-http://localhost:8080/server}"
+      dspace__P__ui__P__url: "${DSPACE_UI_URL:-http://localhost:4000}"
+      db__P__url: "jdbc:postgresql://dspacedb:5432/${POSTGRES_DB:-dspace}"
+      db__P__username: "${POSTGRES_USER:-dspace}"
+      db__P__password: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+      solr__P__server: "http://dspacesolr:8983/solr"
+      mail__P__server: "${MAIL_SERVER:-}"
+      mail__P__server__P__port: "${MAIL_SERVER_PORT:-25}"
+      mail__P__server__P__username: "${MAIL_SERVER_USERNAME:-}"
+      mail__P__server__P__password: "${MAIL_SERVER_PASSWORD:-}"
+      mail__P__from__P__address: "${MAIL_FROM_ADDRESS:-noreply@example.org}"
+      mail__P__admin: "${MAIL_ADMIN_ADDRESS:-admin@example.org}"
+      # Proxy trust so client IPs survive the nginx overlay
+      useProxies: "true"
+      proxies__P__trusted__P__ipranges: "172.16.0.0/12"
+    # Run database migrations, then start Tomcat
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        while ! (echo > /dev/tcp/dspacedb/5432) 2>/dev/null; do
+          echo "Waiting for PostgreSQL..."; sleep 2
+        done
+        /dspace/bin/dspace database migrate
+        catalina.sh run
+    restart: unless-stopped
+
+  # DSpace frontend (Angular UI with server-side rendering)
+  dspace-angular:
+    image: "dspace/dspace-angular:${DSPACE_VER:-dspace-9_x}"
+    container_name: "${COMPOSE_PROJECT_NAME:-dspace}-angular"
+    depends_on:
+      - dspace
+    networks:
+      - dspacenet
+    ports:
+      - "${DSPACE_UI_PORT:-4000}:4000"
+    environment:
+      DSPACE_UI_SSL: "false"
+      DSPACE_UI_HOST: "0.0.0.0"
+      DSPACE_UI_PORT: "4000"
+      DSPACE_UI_NAMESPACE: /
+      # How SSR reaches the REST API inside the compose network
+      DSPACE_REST_SSL: "${DSPACE_REST_SSL:-false}"
+      DSPACE_REST_HOST: "${DSPACE_REST_HOST:-dspace}"
+      DSPACE_REST_PORT: "${DSPACE_REST_PORT:-8080}"
+      DSPACE_REST_NAMESPACE: "${DSPACE_REST_NAMESPACE:-/server}"
+    restart: unless-stopped
+
+  # PostgreSQL with the pgcrypto extension DSpace requires
+  dspacedb:
+    image: "dspace/dspace-postgres-pgcrypto:${DSPACE_VER:-dspace-9_x}"
+    container_name: "${COMPOSE_PROJECT_NAME:-dspace}-db"
+    networks:
+      - dspacenet
+    environment:
+      PGDATA: /pgdata
+      POSTGRES_DB: "${POSTGRES_DB:-dspace}"
+      POSTGRES_USER: "${POSTGRES_USER:-dspace}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+    volumes:
+      - pgdata:/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dspace} -d ${POSTGRES_DB:-dspace}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # Solr with DSpace's cores (search, statistics, oai, authority) preinstalled
+  dspacesolr:
+    image: "dspace/dspace-solr:${DSPACE_VER:-dspace-9_x}"
+    container_name: "${COMPOSE_PROJECT_NAME:-dspace}-solr"
+    networks:
+      - dspacenet
+    # Bound to localhost only — Solr must never be publicly reachable
+    ports:
+      - "127.0.0.1:${SOLR_PORT:-8983}:8983"
+    volumes:
+      - solr_data:/var/solr/data
+    restart: unless-stopped

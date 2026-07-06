@@ -1,0 +1,57 @@
+# Reverse proxy for the ChengetAi DSpace stack.
+# ${DSPACE_HOSTNAME} is substituted by the nginx image's envsubst at startup.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DSPACE_HOSTNAME};
+
+    # Allow ACME HTTP-01 challenges if certbot webroot is used
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${DSPACE_HOSTNAME};
+
+    ssl_certificate     /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+
+    # Large uploads (bitstreams) go through the REST API
+    client_max_body_size 512M;
+
+    # DSpace REST API (backend)
+    location /server {
+        proxy_pass http://dspace:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_read_timeout 300s;
+    }
+
+    # DSpace Angular UI (frontend, server-side rendered)
+    location / {
+        proxy_pass http://dspace-angular:4000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+}

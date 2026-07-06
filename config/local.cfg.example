@@ -1,0 +1,39 @@
+# =============================================================================
+# DSpace backend configuration overrides — local.cfg
+#
+# Copy this file to config/local.cfg (gitignored). It is mounted read-only
+# into the backend container at /dspace/config/local.cfg and overrides
+# dspace.cfg defaults. Values already provided as environment variables in
+# docker-compose.yml (urls, db, solr, mail) do NOT need to be repeated here —
+# use this file for everything else.
+#
+# Full reference: https://wiki.lyrasis.org/display/DSDOC/Configuration+Reference
+# =============================================================================
+
+# --- Identity ---------------------------------------------------------------
+# dspace.name is set via environment; override here only if needed.
+# dspace.name = ChengetAi Digital Repository
+
+# Default language of the instance
+default.locale = en
+
+# --- Handle server ------------------------------------------------------------
+# Register a real handle prefix (https://www.handle.net) for production and
+# replace the placeholder 123456789 prefix.
+# handle.canonical.prefix = https://hdl.handle.net/
+# handle.prefix = 123456789
+
+# --- Submission & workflow ----------------------------------------------------
+# webui.submit.upload.required = true
+
+# --- File upload limits ---------------------------------------------------------
+# spring.servlet.multipart.max-file-size = 512MB
+# spring.servlet.multipart.max-request-size = 512MB
+
+# --- Authentication -------------------------------------------------------------
+# Password auth is enabled by default. To add LDAP/Shibboleth/OIDC, configure
+# the relevant authentication-*.cfg properties here.
+# plugin.sequence.org.dspace.authenticate.AuthenticationMethod = org.dspace.authenticate.PasswordAuthentication
+
+# --- Statistics -----------------------------------------------------------------
+# usage-statistics.authorization.admin.usage = true

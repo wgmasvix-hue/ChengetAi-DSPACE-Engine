@@ -1,0 +1,36 @@
+# =============================================================================
+# Production overlay — adds an nginx reverse proxy with TLS in front of the
+# UI and REST API, and stops publishing the raw backend/UI ports on the host.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Requires in .env:  DSPACE_HOSTNAME, and public DSPACE_UI_URL / DSPACE_REST_URL
+# Requires on disk:  nginx/certs/fullchain.pem and nginx/certs/privkey.pem
+# =============================================================================
+
+services:
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: "${COMPOSE_PROJECT_NAME:-dspace}-proxy"
+    depends_on:
+      - dspace
+      - dspace-angular
+    networks:
+      - dspacenet
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DSPACE_HOSTNAME: "${DSPACE_HOSTNAME:?set DSPACE_HOSTNAME in .env}"
+    volumes:
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    restart: unless-stopped
+
+  # In production only the proxy is exposed; keep services internal.
+  dspace:
+    ports: !override []
+
+  dspace-angular:
+    ports: !override []

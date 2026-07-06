@@ -1,0 +1,29 @@
+name: Validate template
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose files against .env.example
+        run: |
+          cp .env.example .env
+          echo "POSTGRES_PASSWORD=ci-only-password" >> .env
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
+
+      - name: Shellcheck scripts
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q shellcheck
+          shellcheck scripts/*.sh
+
+      - name: Scripts are executable
+        run: |
+          for f in scripts/*.sh; do
+            [ -x "$f" ] || { echo "$f is not executable"; exit 1; }
+          done
