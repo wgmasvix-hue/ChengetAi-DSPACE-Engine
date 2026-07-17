@@ -24,9 +24,26 @@ if ! command -v git >/dev/null; then
   apt-get update -q && apt-get install -y -q git
 fi
 
-if [ -d "${INSTALL_DIR}/.git" ]; then
+# Is a directory a clone of this template?
+is_template_clone() {
+  [ -d "$1/.git" ] && git -C "$1" remote get-url origin 2>/dev/null | grep -qi "ChengetAi-DSPACE-Engine"
+}
+
+if is_template_clone "$INSTALL_DIR"; then
   echo "==> Updating existing installation in ${INSTALL_DIR}"
   git -C "$INSTALL_DIR" pull --ff-only
+elif [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
+  # INSTALL_DIR exists but holds other content (e.g. it's a projects folder).
+  # Use or create a template clone inside it instead of failing.
+  INSTALL_DIR="${INSTALL_DIR}/ChengetAi-DSPACE-Engine"
+  if is_template_clone "$INSTALL_DIR"; then
+    echo "==> Updating existing installation in ${INSTALL_DIR}"
+    git -C "$INSTALL_DIR" checkout main
+    git -C "$INSTALL_DIR" pull --ff-only
+  else
+    echo "==> Install dir is occupied; cloning deployment template into ${INSTALL_DIR}"
+    git clone "$REPO_URL" "$INSTALL_DIR"
+  fi
 else
   echo "==> Cloning deployment template into ${INSTALL_DIR}"
   git clone "$REPO_URL" "$INSTALL_DIR"
