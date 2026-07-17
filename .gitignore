@@ -2,6 +2,7 @@
 .env
 config/local.cfg
 nginx/certs/
+nginx/letsencrypt/
 backups/
 
 # OS / editor noise

@@ -78,24 +78,43 @@ MAIL_SERVER=<your smtp relay>          # registration & notifications need mail
 MAIL_FROM_ADDRESS=noreply@yourdomain.org
 ```
 
-### 3.2 TLS certificates
+### 3.2 TLS certificates + nginx (automated)
 
-Place PEM files at:
+One command does the whole HTTPS setup:
+
+```bash
+chengetai nginx
+```
+
+It confirms your public hostname (switching `.env` to production mode and
+rewriting the URLs if needed), obtains a Let's Encrypt certificate via a
+dockerized certbot (`chengetai nginx selfsigned` generates a throwaway cert
+for testing instead), installs the PEMs into `nginx/certs/`, starts the stack
+behind the proxy, and adds a weekly renewal cron job
+(`/etc/cron.d/chengetai-cert-renew`). Requirements: DNS for the hostname
+already points at this server, and port 80 is reachable from the internet.
+
+Manage it afterwards with:
+
+```bash
+chengetai nginx status   # certificate subject, expiry, proxy state
+chengetai nginx renew    # force a renewal now (also what the cron job runs)
+```
+
+**Manual alternative** — bring your own certificates by placing PEM files at:
 
 ```
 nginx/certs/fullchain.pem
 nginx/certs/privkey.pem
 ```
 
-With Let's Encrypt/certbot, symlink or copy from
-`/etc/letsencrypt/live/<hostname>/` and add a deploy hook that runs
-`docker compose restart proxy` on renewal. The HTTP server block already
-passes `/.well-known/acme-challenge/` through for webroot renewals.
+then run `make up-prod`. On renewal, re-copy the files and
+`docker compose restart proxy`.
 
 ### 3.3 Launch
 
 ```bash
-make up-prod
+make up-prod   # not needed if chengetai nginx already started the stack
 make admin
 ```
 

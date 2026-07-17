@@ -48,7 +48,15 @@ chengetai restore <dir>    restore a snapshot
 chengetai reindex          rebuild the search index
 chengetai upgrade <tag>    backup, bump DSPACE_VER, migrate, reindex
 chengetai doctor           check docker, RAM, disk, TLS certs, mail
+chengetai nginx            HTTPS setup: certs (Let's Encrypt or self-signed) + proxy
+chengetai nginx renew      renew certificates and reload the proxy
+chengetai nginx status     certificate expiry and proxy state
 ```
+
+Going public is one more command after `deploy`: `chengetai nginx` switches
+the deployment to production mode, obtains a Let's Encrypt certificate for
+your hostname (or generates a self-signed one for testing), starts the nginx
+proxy on ports 80/443, and installs a weekly auto-renewal cron job.
 
 ### Manual quick start (without the installer)
 

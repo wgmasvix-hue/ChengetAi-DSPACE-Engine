@@ -15,7 +15,7 @@
 # =============================================================================
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # Operate on the deployment this binary belongs to, even when invoked
 # through the /usr/local/bin/chengetai symlink.
@@ -205,6 +205,134 @@ cmd_upgrade() {
   info "Upgrade to ${new_ver} complete. Verify the UI, search, and submission workflow."
 }
 
+# --- nginx / HTTPS setup -----------------------------------------------------
+
+copy_live_certs() {
+  local live="nginx/letsencrypt/live/${DSPACE_HOSTNAME}"
+  [ -e "${live}/fullchain.pem" ] || die "certbot did not produce certificates for ${DSPACE_HOSTNAME}"
+  mkdir -p nginx/certs
+  cp -L "${live}/fullchain.pem" nginx/certs/fullchain.pem
+  cp -L "${live}/privkey.pem" nginx/certs/privkey.pem
+}
+
+nginx_letsencrypt() {
+  local email="${ADMIN_EMAIL:-}"
+  [ -n "$email" ] || die "ADMIN_EMAIL must be set in .env (Let's Encrypt requires a contact address)"
+  mkdir -p nginx/letsencrypt nginx/certs
+  # The standalone challenge needs port 80; stop the proxy if it holds it
+  compose stop proxy 2>/dev/null || true
+  info "Requesting a Let's Encrypt certificate for ${DSPACE_HOSTNAME}..."
+  info "(requires DNS for ${DSPACE_HOSTNAME} to point at this server, and port 80 reachable)"
+  docker run --rm -p 80:80 \
+    -v "${ROOT_DIR}/nginx/letsencrypt:/etc/letsencrypt" \
+    certbot/certbot certonly --standalone --non-interactive --agree-tos \
+    -m "$email" -d "$DSPACE_HOSTNAME"
+  copy_live_certs
+  info "Certificate installed into nginx/certs/"
+}
+
+nginx_selfsigned() {
+  warn "self-signed certificates cause browser warnings — use for testing only"
+  mkdir -p nginx/certs
+  if command -v openssl >/dev/null; then
+    openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+      -keyout nginx/certs/privkey.pem -out nginx/certs/fullchain.pem \
+      -subj "/CN=${DSPACE_HOSTNAME}"
+  else
+    docker run --rm -v "${ROOT_DIR}/nginx/certs:/certs" alpine/openssl req \
+      -x509 -nodes -newkey rsa:2048 -days 365 \
+      -keyout /certs/privkey.pem -out /certs/fullchain.pem \
+      -subj "/CN=${DSPACE_HOSTNAME}"
+  fi
+  info "Self-signed certificate written to nginx/certs/"
+}
+
+nginx_cron_install() {
+  [ -d nginx/letsencrypt/live ] || return 0
+  if [ "$(id -u)" -eq 0 ] && [ -d /etc/cron.d ]; then
+    printf '20 3 * * 1 root %s nginx renew >/dev/null 2>&1\n' \
+      "${ROOT_DIR}/bin/chengetai" > /etc/cron.d/chengetai-cert-renew
+    info "Weekly auto-renewal installed: /etc/cron.d/chengetai-cert-renew"
+  else
+    warn "not running as root — schedule '${ROOT_DIR}/bin/chengetai nginx renew' weekly yourself"
+  fi
+}
+
+nginx_setup() {
+  load_env
+  # HTTPS implies production mode with a real public hostname
+  if [ "${DEPLOY_ENV:-}" != "production" ] || [ -z "${DSPACE_HOSTNAME:-}" ] || [ "${DSPACE_HOSTNAME:-}" = "dspace.example.org" ]; then
+    [ -t 0 ] || die "nginx setup needs a terminal to confirm the public hostname"
+    read -r -p "Public hostname for this deployment (e.g. repository.example.org): " NEW_HOST
+    if [ -z "$NEW_HOST" ] || [ "$NEW_HOST" = "dspace.example.org" ]; then
+      die "a real public hostname is required"
+    fi
+    set_env_var DEPLOY_ENV production
+    set_env_var DSPACE_HOSTNAME "$NEW_HOST"
+    set_env_var DSPACE_UI_URL "https://${NEW_HOST}"
+    set_env_var DSPACE_REST_URL "https://${NEW_HOST}/server"
+    load_env
+    info "Deployment switched to production mode for https://${DSPACE_HOSTNAME}"
+  fi
+
+  local method="${1:-}"
+  method="${method#--}"
+  if [ -z "$method" ] && [ -t 0 ]; then
+    read -r -p "Certificate method (letsencrypt/selfsigned) [letsencrypt]: " method
+  fi
+  method="${method:-letsencrypt}"
+  case "$method" in
+    letsencrypt) nginx_letsencrypt ;;
+    selfsigned)  nginx_selfsigned ;;
+    *) die "unknown certificate method: ${method} (use letsencrypt or selfsigned)" ;;
+  esac
+
+  info "Starting the production stack behind nginx..."
+  compose up -d
+  wait_for_backend
+  nginx_cron_install
+  echo
+  info "HTTPS is live: https://${DSPACE_HOSTNAME}"
+}
+
+nginx_renew() {
+  load_env
+  [ -d nginx/letsencrypt/live ] || die "no Let's Encrypt state in this deployment — run: chengetai nginx"
+  compose stop proxy 2>/dev/null || true
+  docker run --rm -p 80:80 \
+    -v "${ROOT_DIR}/nginx/letsencrypt:/etc/letsencrypt" \
+    certbot/certbot renew --standalone --quiet
+  copy_live_certs
+  compose up -d
+  info "Certificates renewed; proxy restarted."
+}
+
+nginx_status() {
+  load_env
+  if [ -f nginx/certs/fullchain.pem ]; then
+    if command -v openssl >/dev/null; then
+      info "Certificate for $(openssl x509 -noout -subject -in nginx/certs/fullchain.pem | sed 's/^subject=//')"
+      info "Expires: $(openssl x509 -noout -enddate -in nginx/certs/fullchain.pem | sed 's/^notAfter=//')"
+    else
+      info "Certificate present: nginx/certs/fullchain.pem"
+    fi
+  else
+    warn "no certificate at nginx/certs/fullchain.pem — run: chengetai nginx"
+  fi
+  compose ps proxy 2>/dev/null || true
+}
+
+cmd_nginx() {
+  local action="${1:-setup}"
+  case "$action" in
+    setup)                    shift || true; nginx_setup "$@" ;;
+    letsencrypt|selfsigned|--letsencrypt|--selfsigned) nginx_setup "$action" ;;
+    renew)                    nginx_renew ;;
+    status)                   nginx_status ;;
+    *) die "usage: chengetai nginx [letsencrypt|selfsigned|renew|status]" ;;
+  esac
+}
+
 usage() {
   cat <<EOF
 ${BOLD}chengetai${RESET} — the ChengetAi DSpace deploy CLI (v${VERSION})
@@ -220,6 +348,12 @@ ${BOLD}Day to day${RESET}
   up | down        Start / stop the stack (data volumes are kept)
   restart          Restart all services
   admin            Create a DSpace administrator account
+
+${BOLD}HTTPS / nginx${RESET}
+  nginx            Set up HTTPS: switch to production, get certs, start the proxy
+                   (methods: chengetai nginx letsencrypt | chengetai nginx selfsigned)
+  nginx renew      Renew Let's Encrypt certificates and reload the proxy
+  nginx status     Show certificate subject/expiry and proxy state
 
 ${BOLD}Data & maintenance${RESET}
   backup           Snapshot database + assetstore into ./backups/<timestamp>
@@ -247,6 +381,7 @@ case "$CMD" in
   restore)   ./scripts/restore.sh "$@" ;;
   reindex)   load_env; compose exec dspace /dspace/bin/dspace index-discovery -b ;;
   upgrade)   cmd_upgrade "$@" ;;
+  nginx|tls) cmd_nginx "$@" ;;
   version|--version|-v) echo "chengetai ${VERSION}" ;;
   help|--help|-h) usage ;;
   *) usage; die "unknown command: ${CMD}" ;;
