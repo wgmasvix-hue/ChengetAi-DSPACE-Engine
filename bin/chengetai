@@ -15,7 +15,7 @@
 # =============================================================================
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 # Operate on the deployment this binary belongs to, even when invoked
 # through the /usr/local/bin/chengetai symlink.
@@ -289,10 +289,66 @@ nginx_cron_install() {
   fi
 }
 
+# Name of a non-docker process holding port 80 (e.g. a host-installed nginx)
+host_web_owner() {
+  ss -ltnpH 'sport = :80' 2>/dev/null \
+    | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | head -1 | grep -v '^docker' || true
+}
+
+nginx_hostmode() {
+  set_env_var DEPLOY_ENV production-host
+  load_env
+
+  getent hosts "$DSPACE_HOSTNAME" >/dev/null \
+    || die "DNS for ${DSPACE_HOSTNAME} does not resolve yet — create the A record, wait for propagation, then re-run: chengetai nginx"
+
+  # Local addresses the host nginx proxies to (the stack's published ports)
+  local ui_addr backend_addr
+  case "${DSPACE_UI_PORT:-4000}" in
+    *:*) ui_addr="${DSPACE_UI_PORT}" ;;
+    *)   ui_addr="127.0.0.1:${DSPACE_UI_PORT:-4000}" ;;
+  esac
+  case "${DSPACE_BACKEND_PORT:-8080}" in
+    *:*) backend_addr="${DSPACE_BACKEND_PORT}" ;;
+    *)   backend_addr="127.0.0.1:${DSPACE_BACKEND_PORT:-8080}" ;;
+  esac
+
+  local vhost_file
+  if [ -d /etc/nginx/sites-available ]; then
+    vhost_file="/etc/nginx/sites-available/${DSPACE_HOSTNAME}.conf"
+  else
+    vhost_file="/etc/nginx/conf.d/${DSPACE_HOSTNAME}.conf"
+  fi
+  sed -e "s|__HOSTNAME__|${DSPACE_HOSTNAME}|g" \
+      -e "s|__UI_ADDR__|${ui_addr}|g" \
+      -e "s|__BACKEND_ADDR__|${backend_addr}|g" \
+      nginx/host-vhost.conf.template > "$vhost_file"
+  [ -d /etc/nginx/sites-enabled ] && ln -sf "$vhost_file" "/etc/nginx/sites-enabled/${DSPACE_HOSTNAME}.conf"
+  nginx -t
+  systemctl reload nginx
+  info "Host nginx vhost installed: ${vhost_file}"
+
+  if ! command -v certbot >/dev/null; then
+    info "Installing certbot (with the nginx plugin)..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -q && apt-get install -y -q certbot python3-certbot-nginx
+  fi
+  local email="${ADMIN_EMAIL:?ADMIN_EMAIL must be set in .env}"
+  certbot --nginx --non-interactive --agree-tos --redirect -m "$email" -d "$DSPACE_HOSTNAME"
+
+  info "Starting the DSpace stack..."
+  compose up -d
+  wait_for_backend
+  echo
+  info "HTTPS is live: https://${DSPACE_HOSTNAME}"
+  info "Certificates auto-renew via the system certbot timer."
+}
+
 nginx_setup() {
   load_env
   # HTTPS implies production mode with a real public hostname
-  if [ "${DEPLOY_ENV:-}" != "production" ] || [ -z "${DSPACE_HOSTNAME:-}" ] || [ "${DSPACE_HOSTNAME:-}" = "dspace.example.org" ]; then
+  case "${DEPLOY_ENV:-}" in production|production-host) : ;; *) DEPLOY_ENV="" ;; esac
+  if [ -z "${DEPLOY_ENV:-}" ] || [ -z "${DSPACE_HOSTNAME:-}" ] || [ "${DSPACE_HOSTNAME:-}" = "dspace.example.org" ]; then
     [ -t 0 ] || die "nginx setup needs a terminal to confirm the public hostname"
     read -r -p "Public hostname for this deployment (e.g. repository.example.org): " NEW_HOST
     if [ -z "$NEW_HOST" ] || [ "$NEW_HOST" = "dspace.example.org" ]; then
@@ -304,6 +360,16 @@ nginx_setup() {
     set_env_var DSPACE_REST_URL "https://${NEW_HOST}/server"
     load_env
     info "Deployment switched to production mode for https://${DSPACE_HOSTNAME}"
+  fi
+
+  # If a host-installed web server already owns port 80, integrate with it
+  # instead of running the containerized proxy (which could never bind 80/443).
+  local owner
+  owner="$(host_web_owner)"
+  if [ -n "$owner" ]; then
+    info "Detected existing web server '${owner}' on port 80 — adding a vhost to it instead of running our own proxy"
+    nginx_hostmode
+    return
   fi
 
   local method="${1:-}"
@@ -328,6 +394,12 @@ nginx_setup() {
 
 nginx_renew() {
   load_env
+  if [ "${DEPLOY_ENV:-}" = "production-host" ]; then
+    certbot renew --quiet
+    systemctl reload nginx
+    info "Certificates renewed via the host certbot."
+    return
+  fi
   [ -d nginx/letsencrypt/live ] || die "no Let's Encrypt state in this deployment — run: chengetai nginx"
   compose stop proxy 2>/dev/null || true
   docker run --rm -p 80:80 \
@@ -340,6 +412,16 @@ nginx_renew() {
 
 nginx_status() {
   load_env
+  if [ "${DEPLOY_ENV:-}" = "production-host" ]; then
+    local pem="/etc/letsencrypt/live/${DSPACE_HOSTNAME}/fullchain.pem"
+    if [ -f "$pem" ] && command -v openssl >/dev/null; then
+      info "Host-nginx mode for ${DSPACE_HOSTNAME}"
+      info "Expires: $(openssl x509 -noout -enddate -in "$pem" | sed 's/^notAfter=//') (auto-renewed by the system certbot timer)"
+    else
+      warn "no host certificate at ${pem} — run: chengetai nginx"
+    fi
+    return
+  fi
   if [ -f nginx/certs/fullchain.pem ]; then
     if command -v openssl >/dev/null; then
       info "Certificate for $(openssl x509 -noout -subject -in nginx/certs/fullchain.pem | sed 's/^subject=//')"

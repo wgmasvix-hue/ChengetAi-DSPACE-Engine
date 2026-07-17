@@ -94,6 +94,13 @@ behind the proxy, and adds a weekly renewal cron job
 (`/etc/cron.d/chengetai-cert-renew`). Requirements: DNS for the hostname
 already points at this server, and port 80 is reachable from the internet.
 
+**Shared servers:** if a host-installed web server (e.g. system nginx serving
+other sites) already owns ports 80/443, `chengetai nginx` detects it and
+integrates instead of conflicting: it switches the deployment to
+`production-host` mode (stack published on localhost ports only), installs a
+vhost for your hostname into the host nginx, and obtains the certificate with
+the host's `certbot --nginx` (auto-renewed by the system certbot timer).
+
 Manage it afterwards with:
 
 ```bash

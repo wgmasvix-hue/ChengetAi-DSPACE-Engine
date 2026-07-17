@@ -1,0 +1,31 @@
+# DSpace vhost for a HOST-installed nginx (not the containerized proxy).
+# Installed by `chengetai nginx` when an existing web server owns ports 80/443.
+# Placeholders (__HOSTNAME__, __UI_ADDR__, __BACKEND_ADDR__) are substituted
+# by the CLI. certbot --nginx later adds the TLS server block and redirect.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __HOSTNAME__;
+
+    client_max_body_size 512M;
+
+    location /server {
+        proxy_pass http://__BACKEND_ADDR__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_read_timeout 300s;
+    }
+
+    location / {
+        proxy_pass http://__UI_ADDR__;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+}
