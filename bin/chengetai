@@ -15,7 +15,7 @@
 # =============================================================================
 set -euo pipefail
 
-VERSION="1.3.0"
+VERSION="1.3.1"
 
 # Operate on the deployment this binary belongs to, even when invoked
 # through the /usr/local/bin/chengetai symlink.
@@ -86,11 +86,13 @@ cmd_init() {
     UI_URL="https://${SITE_HOST}"
     REST_URL="https://${SITE_HOST}/server"
     ADMIN_DEFAULT="admin@${SITE_HOST}"
+    REST_SSL=true REST_HOST="$SITE_HOST" REST_PORT=443
   else
     SITE_HOST="localhost"
     UI_URL="http://localhost:4000"
     REST_URL="http://localhost:8080/server"
     ADMIN_DEFAULT="admin@example.org"
+    REST_SSL=false REST_HOST=dspace REST_PORT=8080
   fi
 
   read -r -p "Administrator email [${ADMIN_DEFAULT}]: " ADMIN_MAIL
@@ -106,6 +108,9 @@ cmd_init() {
   set_env_var DSPACE_NAME "\"${SITE_NAME}\""
   set_env_var POSTGRES_PASSWORD "$DB_PASS"
   set_env_var ADMIN_EMAIL "$ADMIN_MAIL"
+  set_env_var DSPACE_REST_SSL "$REST_SSL"
+  set_env_var DSPACE_REST_HOST "$REST_HOST"
+  set_env_var DSPACE_REST_PORT "$REST_PORT"
 
   [ -f config/local.cfg ] || cp config/local.cfg.example config/local.cfg
 
@@ -358,6 +363,10 @@ nginx_setup() {
     set_env_var DSPACE_HOSTNAME "$NEW_HOST"
     set_env_var DSPACE_UI_URL "https://${NEW_HOST}"
     set_env_var DSPACE_REST_URL "https://${NEW_HOST}/server"
+    # Browsers must reach the REST API via the public HTTPS address
+    set_env_var DSPACE_REST_SSL true
+    set_env_var DSPACE_REST_HOST "$NEW_HOST"
+    set_env_var DSPACE_REST_PORT 443
     load_env
     info "Deployment switched to production mode for https://${DSPACE_HOSTNAME}"
   fi

@@ -69,8 +69,10 @@ services:
     restart: unless-stopped
 
   # DSpace frontend (Angular UI with server-side rendering)
+  # The -dist tag runs the production SSR build; the plain tag is a dev server
+  # that rejects real hostnames with "Invalid Host header".
   dspace-angular:
-    image: "dspace/dspace-angular:${DSPACE_VER:-dspace-9_x}"
+    image: "dspace/dspace-angular:${DSPACE_VER:-dspace-9_x}-dist"
     container_name: "${COMPOSE_PROJECT_NAME:-dspace}-angular"
     depends_on:
       - dspace
