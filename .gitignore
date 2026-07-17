@@ -4,6 +4,7 @@ config/local.cfg
 nginx/certs/
 nginx/letsencrypt/
 backups/
+branding/logo.svg
 
 # OS / editor noise
 .DS_Store

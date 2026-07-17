@@ -9,10 +9,13 @@ COMPOSE_PROD = docker compose -f docker-compose.yml -f docker-compose.prod.yml
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
 
-up: ## Start the development stack
+branding/logo.svg:
+	cp branding/logo.default.svg branding/logo.svg
+
+up: branding/logo.svg ## Start the development stack
 	$(COMPOSE) up -d
 
-up-prod: ## Start the production stack (nginx + TLS overlay)
+up-prod: branding/logo.svg ## Start the production stack (nginx + TLS overlay)
 	$(COMPOSE_PROD) up -d
 
 down: ## Stop the stack (data volumes are preserved)

@@ -15,7 +15,7 @@
 # =============================================================================
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # Operate on the deployment this binary belongs to, even when invoked
 # through the /usr/local/bin/chengetai symlink.
@@ -42,6 +42,8 @@ load_env() {
 
 # Pick compose files based on DEPLOY_ENV from .env
 compose() {
+  # The UI mounts branding/logo.svg; seed it from the default on first use
+  [ -f branding/logo.svg ] || cp branding/logo.default.svg branding/logo.svg
   if [ "${DEPLOY_ENV:-development}" = "production" ]; then
     docker compose -f docker-compose.yml -f docker-compose.prod.yml "$@"
   else
@@ -205,6 +207,35 @@ cmd_upgrade() {
   info "Upgrade to ${new_ver} complete. Verify the UI, search, and submission workflow."
 }
 
+# --- branding ----------------------------------------------------------------
+
+cmd_brand() {
+  local name="${1:-}"
+  [ -n "$name" ] || die 'usage: chengetai brand "Site Name" [logo.svg]'
+  load_env
+  set_env_var DSPACE_NAME "\"${name}\""
+  if [ -n "${2:-}" ]; then
+    [ -f "$2" ] || die "logo file not found: $2"
+    cp "$2" branding/logo.svg
+    info "Installed custom logo from $2"
+  else
+    # Generate a simple text wordmark from the site name
+    local esc width
+    esc=$(printf '%s' "$name" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+    width=$(( ${#name} * 15 + 20 ))
+    cat > branding/logo.svg <<EOF
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="44" viewBox="0 0 ${width} 44" role="img" aria-label="${esc}">
+  <text x="0" y="31" font-family="Helvetica, Arial, sans-serif" font-size="26" font-weight="700" fill="#207698">${esc}</text>
+</svg>
+EOF
+    info "Generated wordmark logo for \"${name}\""
+  fi
+  chmod 644 branding/logo.svg
+  load_env
+  compose up -d
+  info "Branding applied. Hard-refresh the browser (Ctrl+Shift+R) — the old logo may be cached."
+}
+
 # --- nginx / HTTPS setup -----------------------------------------------------
 
 copy_live_certs() {
@@ -348,6 +379,7 @@ ${BOLD}Day to day${RESET}
   up | down        Start / stop the stack (data volumes are kept)
   restart          Restart all services
   admin            Create a DSpace administrator account
+  brand "Name"     Set the site name + header logo (optional 2nd arg: logo.svg)
 
 ${BOLD}HTTPS / nginx${RESET}
   nginx            Set up HTTPS: switch to production, get certs, start the proxy
@@ -382,6 +414,7 @@ case "$CMD" in
   reindex)   load_env; compose exec dspace /dspace/bin/dspace index-discovery -b ;;
   upgrade)   cmd_upgrade "$@" ;;
   nginx|tls) cmd_nginx "$@" ;;
+  brand)     cmd_brand "$@" ;;
   version|--version|-v) echo "chengetai ${VERSION}" ;;
   help|--help|-h) usage ;;
   *) usage; die "unknown command: ${CMD}" ;;

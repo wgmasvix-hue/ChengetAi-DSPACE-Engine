@@ -26,8 +26,14 @@ Don't set the same property in more than one layer. After changing
 
 ### Site identity
 
-- Name: `DSPACE_NAME` in `.env`
+- Name + header logo in one step: `chengetai brand "Your Site Name"` (add a
+  second argument to use your own SVG: `chengetai brand "Name" logo.svg`)
+- Name only: `DSPACE_NAME` in `.env`
 - Default language: `default.locale` in `config/local.cfg`
+
+The header logo is `branding/logo.svg`, mounted over the DSpace logo in the
+UI container — see `branding/README.md`. Deeper white-labeling (homepage
+text, footer, colors) requires a themed image; see "UI theming" below.
 
 ### Authentication (LDAP / Shibboleth / OIDC)
 

@@ -78,6 +78,9 @@ services:
       - dspacenet
     ports:
       - "${DSPACE_UI_PORT:-4000}:4000"
+    volumes:
+      # Header logo — replace via `chengetai brand` (see branding/README.md)
+      - ./branding/logo.svg:/app/dist/browser/assets/images/dspace-logo.svg:ro
     environment:
       DSPACE_UI_SSL: "false"
       DSPACE_UI_HOST: "0.0.0.0"
